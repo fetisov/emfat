@@ -23,7 +23,7 @@
  */
 
 /*
- * version: 1.0 (4.01.2015)
+ * version: 1.1 (2.04.2017)
  */
 
 #include "emfat.h"
@@ -125,11 +125,13 @@ extern "C" {
 typedef struct
 {
 	uint8_t  status;          // 0x80 for bootable, 0x00 for not bootable, anything else for invalid
-	uint8_t  StartAddrHead;   // head address of start of partition
-	uint16_t StartAddrCylSec; // (AddrCylSec & 0x3F) for sector,  (AddrCylSec & 0x3FF) for cylendar
+	uint8_t  start_head;      // The head of the start
+	uint8_t  start_sector;    // (S | ((C >> 2) & 0xC0)) where S is the sector of the start and C is the cylinder of the start. Note that S is counted from one.
+	uint8_t  start_cylinder;  // (C & 0xFF) where C is the cylinder of the start
 	uint8_t  PartType;
-	uint8_t  EndAddrHead;     // head address of start of partition
-	uint16_t EndAddrCylSec;   // (AddrCylSec & 0x3F) for sector,  (AddrCylSec & 0x3FF) for cylendar
+	uint8_t  end_head;
+	uint8_t  end_sector;
+	uint8_t  end_cylinder;
 	uint32_t StartLBA;        // linear address of first sector in partition. Multiply by sector size (usually 512) for real offset
 	uint32_t EndLBA;          // linear address of last sector in partition. Multiply by sector size (usually 512) for real offset
 } mbr_part_t;
@@ -173,6 +175,17 @@ typedef struct
 	uint8_t volume_label[VOL_LABEL_LEN];
 	uint8_t file_system_type[FILE_SYS_TYPE_LENGTH];
 } boot_sector;
+
+typedef struct
+{
+	uint32_t signature1;     /* 0x41615252L */
+	uint32_t reserved1[120]; /* Nothing as far as I can tell */
+	uint32_t signature2;     /* 0x61417272L */
+	uint32_t free_clusters;  /* Free cluster count.  -1 if unknown */
+	uint32_t next_cluster;   /* Most recently allocated cluster */
+	uint32_t reserved2[3];
+	uint32_t signature3;
+} fsinfo_t;
 
 typedef struct
 {
@@ -254,6 +267,25 @@ bool emfat_init_entries(emfat_entry_t *entries)
 	return true;
 }
 
+static void lba_to_chs(int lba, uint8_t *cl, uint8_t *ch, uint8_t *dh)
+{
+  int cylinder, head, sector;
+  int sectors = 63;
+	int heads = 255;
+	int cylinders = 1024;
+  sector = lba % sectors + 1;
+  head = (lba / sectors) % heads;
+  cylinder = lba / (sectors * heads);
+  if (cylinder >= cylinders)
+    {
+      *cl = *ch = *dh = 0xff;
+      return;
+    }
+  *cl = sector | ((cylinder & 0x300) >> 2);
+  *ch = cylinder & 0xFF;
+  *dh = head;
+}
+
 bool emfat_init(emfat_t *emfat, const char *label, emfat_entry_t *entries)
 {
 	uint32_t sect_per_fat;
@@ -274,6 +306,7 @@ bool emfat_init(emfat_t *emfat, const char *label, emfat_entry_t *entries)
 		if (e->dir)
 		{
 			e->curr_size = 0;
+			e->max_size = 0;
 			e->priv.first_clust = clust;
 			e->priv.last_clust = clust + SIZE_TO_NCLUST(e->priv.num_subentry * sizeof(dir_entry)) - 1;
 			e->priv.last_reserved = e->priv.last_clust;
@@ -290,40 +323,22 @@ bool emfat_init(emfat_t *emfat, const char *label, emfat_entry_t *entries)
 
 	emfat->vol_label = label;
 	emfat->priv.num_entries = i;
-	emfat->priv.boot_sect = 62;
-	emfat->priv.fat1_sect = emfat->priv.boot_sect + 1;
+	emfat->priv.boot_lba = 62;
+	emfat->priv.fsinfo_lba = emfat->priv.boot_lba + 1;
+	emfat->priv.fat1_lba = emfat->priv.fsinfo_lba + 1;
 	emfat->priv.num_clust = clust;
 	sect_per_fat = SIZE_TO_NSECT((uint64_t)emfat->priv.num_clust * 4);
-	emfat->priv.fat2_sect = emfat->priv.fat1_sect + sect_per_fat;
-	emfat->priv.root_sect = emfat->priv.fat2_sect + sect_per_fat;
+	emfat->priv.fat2_lba = emfat->priv.fat1_lba + sect_per_fat;
+	emfat->priv.root_lba = emfat->priv.fat2_lba + sect_per_fat;
 	emfat->priv.entries = entries;
 	emfat->priv.last_entry = entries;
-	emfat->num_sectors = clust * 8 + emfat->priv.root_sect;
-	emfat->vol_size = (uint64_t)emfat->num_sectors * SECT;
+	emfat->disk_sectors = clust * SECT_PER_CLUST + emfat->priv.root_lba;
+	emfat->vol_size = (uint64_t)emfat->disk_sectors * SECT;
+	/* calc cyl number */
+//	i = ((emfat->disk_sectors + 63*255 - 1) / (63*255));
+//	emfat->disk_sectors = i * 63*255;
 	return true;
 }
-
-/*
-void lba_to_chs(uint32_t lba, uint8_t *cl, uint8_t *ch, uint8_t *dh)
-{
-	int cylinder, head, sector;
-	int sectors = 63, heads = 255, cylinders = 1024;
-
-	sector = lba % sectors + 1;
-	head = (lba / sectors) % heads;
-	cylinder = lba / (sectors * heads);
-
-	if (cylinder >= cylinders)
-	{
-		*cl = *ch = *dh = 0xff;
-		return;
-	}
-
-	*cl = sector | ((cylinder & 0x300) >> 2);
-	*ch = cylinder & 0xFF;
-	*dh = head;
-}
-*/
 
 void read_mbr_sector(const emfat_t *emfat, uint8_t *sect)
 {
@@ -332,15 +347,12 @@ void read_mbr_sector(const emfat_t *emfat, uint8_t *sect)
 	mbr = (mbr_t *)sect;
 	mbr->DiskSig = 0;
 	mbr->Reserved = 0;
-	mbr->PartTable[0].status = 0x00;
-	mbr->PartTable[0].StartAddrHead = 0;
-	mbr->PartTable[0].StartAddrCylSec = 0;
+	mbr->PartTable[0].status = 0x80;
 	mbr->PartTable[0].PartType = 0x0C;
-	mbr->PartTable[0].EndAddrHead = 0;
-	mbr->PartTable[0].EndAddrCylSec = 0;
-	mbr->PartTable[0].StartLBA = emfat->priv.boot_sect;
-	mbr->PartTable[0].EndLBA = emfat->num_sectors - emfat->priv.boot_sect;
-//		((emfat->num_sectors + SECT_PER_CLUST - 1) / SECT_PER_CLUST) * SECT_PER_CLUST;
+	mbr->PartTable[0].StartLBA = emfat->priv.boot_lba;
+	mbr->PartTable[0].EndLBA = emfat->disk_sectors;
+	lba_to_chs(mbr->PartTable[0].StartLBA, &mbr->PartTable[0].start_sector, &mbr->PartTable[0].start_cylinder, &mbr->PartTable[0].start_head);
+	lba_to_chs(emfat->disk_sectors - 1, &mbr->PartTable[0].end_sector, &mbr->PartTable[0].end_cylinder, &mbr->PartTable[0].end_head);
 	mbr->BootSignature[0] = 0x55;
 	mbr->BootSignature[1] = 0xAA;
 }
@@ -355,9 +367,9 @@ void read_boot_sector(const emfat_t *emfat, uint8_t *sect)
 	bs->jump[2] = 0x90;
 	memcpy(bs->OEM_name, "MSDOS5.0", 8);
 	bs->bytes_per_sec = SECT;
-	bs->sec_per_clus = 8;
-	bs->reserved_sec_cnt = 1;
-	bs->fat_cnt = 2;
+	bs->sec_per_clus = 8;     /* 4 kb per cluster */
+	bs->reserved_sec_cnt = 2; /* boot sector & fsinfo sector */
+	bs->fat_cnt = 2;          /* two tables */
 	bs->root_dir_max_cnt = 0;
 	bs->tot_sectors = 0;
 	bs->media_desc = 0xF8;
@@ -365,14 +377,14 @@ void read_boot_sector(const emfat_t *emfat, uint8_t *sect)
 	bs->sec_per_track = 63;
 	bs->number_of_heads = 0xFF;
 	bs->hidden_sec_cnt = 62;
-		bs->tol_sector_cnt = emfat->priv.root_sect + emfat->priv.num_clust * 8;
-		bs->sectors_per_fat = emfat->priv.fat2_sect - emfat->priv.fat1_sect;
+	bs->tol_sector_cnt = emfat->disk_sectors - emfat->priv.boot_lba;
+	bs->sectors_per_fat = emfat->priv.fat2_lba - emfat->priv.fat1_lba;
 	bs->ext_flags = 0;
 	bs->fs_version[0] = 0;
 	bs->fs_version[1] = 0;
 	bs->root_dir_strt_cluster = 2;
-	bs->fs_info_sector = 0;
-	bs->backup_boot_sector = 0;
+	bs->fs_info_sector = 1;
+	bs->backup_boot_sector = 0; /* not used */
 	bs->drive_number = 128;
 	bs->boot_sig = 0x29;
 	bs->volume_id[0] = 148;
@@ -407,6 +419,18 @@ emfat_entry_t *find_entry(const emfat_t *emfat, uint32_t clust, emfat_entry_t *n
 			nearest++;
 		}
 	return NULL;
+}
+
+void read_fsinfo_sector(const emfat_t *emfat, uint8_t *sect)
+{
+	fsinfo_t *info = (fsinfo_t *)sect;
+	info->signature1 = 0x41615252L;
+	info->signature2 = 0x61417272L;
+	info->free_clusters = 0;
+	info->next_cluster = emfat->priv.num_clust + 2;
+	memset(info->reserved1, 0, sizeof(info->reserved1));
+	memset(info->reserved2, 0, sizeof(info->reserved2));
+	info->signature3 = 0xAA550000;
 }
 
 void read_fat_sector(emfat_t *emfat, uint8_t *sect, uint32_t index)
@@ -465,12 +489,18 @@ void read_fat_sector(emfat_t *emfat, uint8_t *sect, uint32_t index)
 	emfat->priv.last_entry = le;
 }
 
-void fill_entry(dir_entry *entry, const char *name, uint8_t attr, uint32_t clust, uint32_t size)
+void fill_entry(dir_entry *entry, const char *name, uint8_t attr, uint32_t clust, const uint32_t cma[3], uint32_t size)
 {
 	int i, l, l1, l2;
 	int dot_pos;
 
 	memset(entry, 0, sizeof(dir_entry));
+    
+	entry->crt_date = cma[0] >> 16;
+	entry->crt_time = cma[0] & 0xFFFF;
+	entry->lst_mod_date = cma[1] >> 16;
+	entry->lst_mod_time = cma[1] & 0xFFFF;
+	entry->lst_access_date = cma[2] >> 16;
 
 	l = strlen(name);
 	dot_pos = -1;
@@ -522,13 +552,13 @@ void fill_dir_sector(emfat_t *emfat, uint8_t *data, emfat_entry_t *entry, uint32
 	{
 		if (entry->priv.top == NULL)
 		{
-			fill_entry(de++, emfat->vol_label, ATTR_VOL_LABEL, 0, 0);
+			fill_entry(de++, emfat->vol_label, ATTR_VOL_LABEL, 0, 0, 0);
 			avail -= sizeof(dir_entry);
 		}
 		else
 		{
-			fill_entry(de++, ".", ATTR_DIR | ATTR_READ, entry->priv.first_clust, 0);
-			fill_entry(de++, "..", ATTR_DIR | ATTR_READ, entry->priv.top->priv.first_clust, 0);
+			fill_entry(de++, ".", ATTR_DIR | ATTR_READ, entry->priv.first_clust, 0, 0);
+			fill_entry(de++, "..", ATTR_DIR | ATTR_READ, entry->priv.top->priv.first_clust, 0, 0);
 			avail -= sizeof(dir_entry) * 2;
 		}
 		entry = entry->priv.sub;
@@ -549,8 +579,8 @@ void fill_dir_sector(emfat_t *emfat, uint8_t *data, emfat_entry_t *entry, uint32
 	while (entry != NULL && avail >= sizeof(dir_entry))
 	{
 		if (entry->dir)
-			fill_entry(de++, entry->name, ATTR_DIR | ATTR_READ, entry->priv.first_clust, 0); else
-			fill_entry(de++, entry->name, ATTR_ARCHIVE | ATTR_READ, entry->priv.first_clust, entry->curr_size);
+			fill_entry(de++, entry->name, ATTR_DIR | ATTR_READ, entry->priv.first_clust, entry->cma_time, 0); else
+			fill_entry(de++, entry->name, ATTR_ARCHIVE | ATTR_READ, entry->priv.first_clust, entry->cma_time, entry->curr_size);
 		entry = entry->priv.next;
 		avail -= sizeof(dir_entry);
 	}
@@ -596,20 +626,23 @@ void emfat_read(emfat_t *emfat, uint8_t *data, uint32_t sector, int num_sectors)
 {
 	while (num_sectors > 0)
 	{
-		if (sector >= emfat->priv.root_sect)
-			read_data_sector(emfat, data, sector - emfat->priv.root_sect);
+		if (sector >= emfat->priv.root_lba)
+			read_data_sector(emfat, data, sector - emfat->priv.root_lba);
 		else
 		if (sector == 0)
 			read_mbr_sector(emfat, data);
 		else
-		if (sector == emfat->priv.boot_sect)
+		if (sector == emfat->priv.fsinfo_lba)
+			read_fsinfo_sector(emfat, data);
+		else
+		if (sector == emfat->priv.boot_lba)
 			read_boot_sector(emfat, data);
 		else
-		if (sector >= emfat->priv.fat1_sect && sector < emfat->priv.fat2_sect)
-			read_fat_sector(emfat, data, sector - emfat->priv.fat1_sect);
+		if (sector >= emfat->priv.fat1_lba && sector < emfat->priv.fat2_lba)
+			read_fat_sector(emfat, data, sector - emfat->priv.fat1_lba);
 		else
-		if (sector >= emfat->priv.fat2_sect && sector < emfat->priv.root_sect)
-			read_fat_sector(emfat, data, sector - emfat->priv.fat2_sect);
+		if (sector >= emfat->priv.fat2_lba && sector < emfat->priv.root_lba)
+			read_fat_sector(emfat, data, sector - emfat->priv.fat2_lba);
 		else
 			memset(data, 0, SECT);
 		data += SECT;
@@ -649,18 +682,67 @@ void emfat_write(emfat_t *emfat, const uint8_t *data, uint32_t sector, int num_s
 {
 	while (num_sectors > 0)
 	{
-		if (sector >= emfat->priv.root_sect)
-			write_data_sector(emfat, data, sector - emfat->priv.root_sect);
+		if (sector >= emfat->priv.root_lba)
+			write_data_sector(emfat, data, sector - emfat->priv.root_lba);
 		else
-		if (sector >= emfat->priv.fat1_sect && sector < emfat->priv.fat2_sect)
-			write_fat_sector(emfat, data, sector - emfat->priv.fat1_sect);
+		if (sector >= emfat->priv.fat1_lba && sector < emfat->priv.fat2_lba)
+			write_fat_sector(emfat, data, sector - emfat->priv.fat1_lba);
 		else
-		if (sector >= emfat->priv.fat2_sect && sector < emfat->priv.root_sect)
-			write_fat_sector(emfat, data, sector - emfat->priv.fat2_sect);
+		if (sector >= emfat->priv.fat2_lba && sector < emfat->priv.root_lba)
+			write_fat_sector(emfat, data, sector - emfat->priv.fat2_lba);
 		data += SECT;
 		num_sectors--;
 		sector++;
 	}
+}
+
+#define FEBRUARY		2
+#define	STARTOFTIME		1970
+#define SECDAY			86400L
+#define SECYR			(SECDAY * 365)
+#define	leapyear(year)		((year) % 4 == 0)
+#define	days_in_year(a)		(leapyear(a) ? 366 : 365)
+#define	days_in_month(a)	(month_days[(a) - 1])
+
+static int month_days[12] = {
+	31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31
+};
+
+uint32_t emfat_cma_time_from_unix(uint32_t tim)
+{
+	register int i;
+	register long tmp, day;
+    int ymd[3];
+    int hms[3];
+
+	day = tim / SECDAY;
+	tmp = tim % SECDAY;
+
+	/* Hours, minutes, seconds are easy */
+
+	hms[0] = tmp / 3600;
+	hms[1] = (tmp % 3600) / 60;
+	hms[2] = (tmp % 3600) % 60;
+
+	/* Number of years in days */
+	for (i = STARTOFTIME; day >= days_in_year(i); i++)
+		day -= days_in_year(i);
+	ymd[0] = i;
+
+	/* Number of months in days left */
+	if (leapyear(ymd[0])) {
+		days_in_month(FEBRUARY) = 29;
+	}
+	for (i = 1; day >= days_in_month(i); i++) {
+		day -= days_in_month(i);
+	}
+	days_in_month(FEBRUARY) = 28;
+	ymd[1] = i;
+
+	/* Days are what is left over (+1) from all that. */
+	ymd[2] = day + 1;
+    
+    return EMFAT_ENCODE_CMA_TIME(ymd[2], ymd[1], ymd[0], hms[0], hms[1], hms[2]);
 }
 
 #ifdef __cplusplus

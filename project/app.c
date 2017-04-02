@@ -85,18 +85,34 @@ void autorun_read_proc(uint8_t *dest, int size, uint32_t offset, size_t userdata
 void icon_read_proc(uint8_t *dest, int size, uint32_t offset, size_t userdata);
 void readme_read_proc(uint8_t *dest, int size, uint32_t offset, size_t userdata);
 
+#define CMA_TIME EMFAT_ENCODE_CMA_TIME(2,4,2017, 13,0,0)
+#define CMA { CMA_TIME, CMA_TIME, CMA_TIME }
+
 // Структура ФС
+static emfat_entry_t entries[] =
+{
+	// name          dir    lvl offset  size             max_size        user  time  read               write
+	{ "",            true,  0,  0,      0,               0,              0,    CMA,  NULL,              NULL }, // root
+	{ "autorun.inf", false, 1,  0,      AUTORUN_SIZE,    AUTORUN_SIZE,   0,    CMA,  autorun_read_proc, NULL }, // autorun.inf
+	{ "icon.ico",    false, 1,  0,      ICON_SIZE,       ICON_SIZE,      0,    CMA,  icon_read_proc,    NULL }, // icon.ico
+	{ "drivers",     true,  1,  0,      0,               0,              0,    CMA,  NULL,              NULL }, // drivers/
+	{ "readme.txt",  false, 2,  0,      README_SIZE,     1024*1024,      0,    CMA,  readme_read_proc,  NULL }, // drivers/readme.txt
+	{ NULL }
+};
+
+/*
 static emfat_entry_t entries[] =
 {
 	// name          dir    lvl offset  size             max_size        user  read               write
 	{ "",            true,  0,  0,      0,               0,              0,    NULL,              NULL }, // root
-	{ "autorun.inf", false, 1,  0,      AUTORUN_SIZE,    AUTORUN_SIZE,   0,    autorun_read_proc, NULL }, // autorun.inf
-	{ "icon.ico",    false, 1,  0,      ICON_SIZE,       ICON_SIZE,      0,    icon_read_proc,    NULL }, // icon.ico
+	{ "autorun.inf", false, 1,  0,      AUTORUN_SIZE,    1*1024*1024*1024,   0,    autorun_read_proc, NULL }, // autorun.inf
+	{ "icon.ico",    false, 1,  0,      ICON_SIZE,       1*1024*1024*1024,      0,    icon_read_proc,    NULL }, // icon.ico
 	{ "drivers",     true,  1,  0,      0,               0,              0,    NULL,              NULL }, // drivers/
-	{ "readme.txt",  false, 2,  0,      README_SIZE,     README_SIZE,    0,    readme_read_proc,  NULL }, // drivers/readme.txt
+	{ "readme.txt",  false, 2,  0,      README_SIZE,     1*1024*1024*1024,    0,    readme_read_proc,  NULL }, // drivers/readme.txt
+	{ "abc.txt",  false, 2,  0,      README_SIZE,     1*1024*1024*1024-32768+8192,    0,    readme_read_proc,  NULL }, // drivers/readme.txt
 	{ NULL }
 };
-
+*/
 void autorun_read_proc(uint8_t *dest, int size, uint32_t offset, size_t userdata)
 {
 	int len = 0;

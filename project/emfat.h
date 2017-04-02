@@ -52,6 +52,7 @@ struct emfat_entry
 	uint32_t        curr_size;
 	uint32_t        max_size;
 	size_t          user_data;
+	uint32_t        cma_time[3]; /**< create/mod/access time in unix format */
 	emfat_readcb_t  readcb;
 	emfat_writecb_t writecb;
 	struct
@@ -69,14 +70,15 @@ struct emfat_entry
 typedef struct
 {
 	uint64_t    vol_size;
-	uint32_t    num_sectors;
+	uint32_t    disk_sectors;
 	const char *vol_label;
 	struct
 	{
-		uint32_t       boot_sect;
-		uint32_t       fat1_sect;
-		uint32_t       fat2_sect;
-		uint32_t       root_sect;
+		uint32_t       boot_lba;
+		uint32_t       fsinfo_lba;
+		uint32_t       fat1_lba;
+		uint32_t       fat2_lba;
+		uint32_t       root_lba;
 		uint32_t       num_clust;
 		emfat_entry_t *entries;
 		emfat_entry_t *last_entry;
@@ -87,6 +89,17 @@ typedef struct
 bool emfat_init(emfat_t *emfat, const char *label, emfat_entry_t *entries);
 void emfat_read(emfat_t *emfat, uint8_t *data, uint32_t sector, int num_sectors);
 void emfat_write(emfat_t *emfat, const uint8_t *data, uint32_t sector, int num_sectors);
+
+#define EMFAT_ENCODE_CMA_TIME(D,M,Y,h,m,s) \
+    ((((((Y)-1980) << 9) | ((M) << 5) | (D)) << 16) | \
+    (((h) << 11) | ((m) << 5) | (s >> 1)))
+
+static inline uint32_t emfat_encode_cma_time(int D, int M, int Y, int h, int m, int s)
+{
+    return EMFAT_ENCODE_CMA_TIME(D,M,Y,h,m,s);
+}
+
+uint32_t emfat_cma_time_from_unix(uint32_t unix_time);
 
 #ifdef __cplusplus
 }

@@ -1,28 +1,28 @@
 #include "StorageMode.h"
 
-#define STORAGE_LUN_NBR                  1 
+#define STORAGE_LUN_NBR 1
 
-const int8_t  STORAGE_Inquirydata[] = 
+const int8_t STORAGE_Inquirydata[] = 
 {
-	0x00, 0x80, 0x02, 0x02,
+  0x00, 0x80, 0x02, 0x02,
   (USBD_STD_INQUIRY_LENGTH - 5),
   0x00, 0x00, 0x00,
-  'I', 'N', 'T', 'R', 'O', 'N', ' ', ' ', // Manufacturer : 8 bytes
-  'D', 'e', 'f', 'e', 'c', 't', 'o', 's', // Product      : 16 Bytes
-  'c', 'o', 'p', 'e', ' ', ' ', ' ', ' ', //
+  'A', 'N', 'Y', 'B', 'O', 'D', 'Y', ' ', // Manufacturer : 8 bytes
+  'E', 'M', 'F', 'A', 'T', ' ', 's', 't', // Product      : 16 Bytes
+  'o', 'r', 'a', 'g', 'e', ' ', ' ', ' ', //
   ' ', ' ', ' ' ,' ',                     // Version      : 4 Bytes
 };
 
 int8_t STORAGE_Init(uint8_t lun)
 {
-	return (0);
+	return 0;
 }
 
 int8_t STORAGE_GetCapacity(uint8_t lun, uint32_t *block_num, uint32_t *block_size)
 {
   *block_size = 512;
-  *block_num = emfat.num_sectors;
-  return (0);
+  *block_num = emfat.disk_sectors;
+  return 0;
 }
 
 int8_t STORAGE_IsReady(uint8_t lun)
