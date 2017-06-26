@@ -148,12 +148,12 @@ int main(void)
 	emfat_init(&emfat, "emfat", entries);
 
 #ifdef USE_USB_OTG_HS
-  USBD_Init(&USB_OTG_dev, USB_OTG_HS_CORE_ID, &USR_desc, &USBD_MSC_cb, &USR_cb);
+	USBD_Init(&USB_OTG_dev, USB_OTG_HS_CORE_ID, &USR_desc, &USBD_MSC_cb, &USR_cb);
 #else
-  USBD_Init(&USB_OTG_dev, USB_OTG_FS_CORE_ID, &USR_desc, &USBD_MSC_cb, &USR_cb);
+	USBD_Init(&USB_OTG_dev, USB_OTG_FS_CORE_ID, &USR_desc, &USBD_MSC_cb, &USR_cb);
 #endif
 
-  while (true)
+	while (true)
 	{
 	}
 }

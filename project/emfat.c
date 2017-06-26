@@ -495,12 +495,15 @@ void fill_entry(dir_entry *entry, const char *name, uint8_t attr, uint32_t clust
 	int dot_pos;
 
 	memset(entry, 0, sizeof(dir_entry));
-    
-	entry->crt_date = cma[0] >> 16;
-	entry->crt_time = cma[0] & 0xFFFF;
-	entry->lst_mod_date = cma[1] >> 16;
-	entry->lst_mod_time = cma[1] & 0xFFFF;
-	entry->lst_access_date = cma[2] >> 16;
+
+	if (cma)
+	{
+		entry->crt_date = cma[0] >> 16;
+		entry->crt_time = cma[0] & 0xFFFF;
+		entry->lst_mod_date = cma[1] >> 16;
+		entry->lst_mod_time = cma[1] & 0xFFFF;
+		entry->lst_access_date = cma[2] >> 16;
+	}
 
 	l = strlen(name);
 	dot_pos = -1;
